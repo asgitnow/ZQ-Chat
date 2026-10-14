@@ -43,9 +43,22 @@ const opts = {
 
 // 文件型 localStorage 替身（身份持久化）
 class FileStorage {
-  constructor(file) { this.file = path.resolve(file); this.map = {}; try { this.map = JSON.parse(fs.readFileSync(this.file, 'utf8')); } catch { /* new */ } }
+  constructor(file) {
+    this.file = path.resolve(file);
+    this.map = {};
+    try { fs.mkdirSync(path.dirname(this.file), { recursive: true }); } catch { /* ignore */ }
+    try { this.map = JSON.parse(fs.readFileSync(this.file, 'utf8')); } catch { /* new */ }
+  }
   getItem(k) { return this.map[k] ?? null; }
-  setItem(k, v) { this.map[k] = v; try { fs.writeFileSync(this.file, JSON.stringify(this.map)); } catch { /* ignore */ } }
+  setItem(k, v) {
+    this.map[k] = v;
+    try { fs.writeFileSync(this.file, JSON.stringify(this.map)); }
+    catch (e) {
+      // 身份写不下去会静默退化成"每次重连都是新人"，必须显式报出
+      process.stderr.write(`[zq] 身份持久化失败（${e.code}）: ${this.file}\n`);
+      process.exit(3);
+    }
+  }
 }
 
 const out = (obj) => process.stdout.write(JSON.stringify(obj) + '\n');

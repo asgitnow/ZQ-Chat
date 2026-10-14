@@ -3,6 +3,7 @@
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
+import os from 'node:os';
 
 const args = process.argv.slice(2);
 const A = (k, d) => { const i = args.indexOf('--' + k); return i >= 0 ? args[i + 1] : d; };
@@ -12,7 +13,7 @@ const PW = A('pass', 'demo-pw');
 
 const out = (s) => process.stdout.write(s + '\n');
 
-function client(name, pass = PW, state = `/tmp/live-${name}.json`, url = URL_, fresh = false) {
+function client(name, pass = PW, state = path.join(os.tmpdir(), `live-${name}.json`), url = URL_, fresh = false) {
   if (fresh) fs.rmSync(state, { force: true });
   const dbg = process.env.LIVE_DBG ? ['--debug'] : [];
   const p = spawn(process.execPath, [
@@ -26,7 +27,7 @@ function client(name, pass = PW, state = `/tmp/live-${name}.json`, url = URL_, f
       try { events.push(JSON.parse(line)); } catch { /* ignore */ }
     }
   });
-  const errFile = process.env.LIVE_DBG ? fs.openSync(`/tmp/live-${name}.err`, 'a') : null;
+  const errFile = process.env.LIVE_DBG ? fs.openSync(path.join(os.tmpdir(), `live-${name}.err`), 'a') : null;
   p.stderr.on('data', (b) => { if (errFile !== null) fs.writeSync(errFile, String(b)); process.stderr.write(`[${name}] ${b}`); });
   const send = (text) => p.stdin.write(text + '\n');
   const kill = () => { try { p.stdin.write('/quit\n'); p.stdin.end(); } catch { /* ignore */ } setTimeout(() => p.kill(), 500); };
@@ -50,9 +51,9 @@ out('══ 实时部署端到端验证（经 echbridge → Cloudflare Workers �
 out(`   url=${URL_} room=${ROOM}`);
 
 // ── ① 三个对话并发加入 ──
-const alice = client('Alice', PW, `/tmp/live-Alice.json`, URL_, true);
-const bob = client('Bob', PW, `/tmp/live-Bob.json`, URL_, true);
-const carol = client('Carol', PW, `/tmp/live-Carol.json`, URL_, true);
+const alice = client('Alice', PW, undefined, URL_, true);
+const bob = client('Bob', PW, undefined, URL_, true);
+const carol = client('Carol', PW, undefined, URL_, true);
 out('① 三方加入');
 for (const c of [alice, bob, carol]) ok(await c.wait((e) => e.ev === 'secured'), `${c.name} 完成 E2EE 握手（CPace+ML-KEM+X25519 真实往返）`);
 
@@ -76,7 +77,7 @@ ok(alice.events.some((e) => e.ev === 'msg' && e.text === '我也收到') && bob.
 
 // ── ③ 第四人加入触发密钥轮换（epoch），轮换后继续聊 ──
 out('③ 新人加入 → epoch 轮换');
-const dave = client('Dave', PW, `/tmp/live-Dave.json`, URL_, true);
+const dave = client('Dave', PW, undefined, URL_, true);
 ok(await dave.wait((e) => e.ev === 'secured'), 'Dave 加入');
 ok(await alice.wait(() => alice.events.filter((e) => e.ev === 'peer_ready').length >= 3, 30000), 'Alice 与 Dave 建会话');
 // 等 Dave 与其他人两两握手全部完成，再等 5s 合并窗口的 epoch 广播
@@ -98,7 +99,7 @@ const fpMatch = codes && bob.events.find((e) => e.ev === 'codes');
 
 // ── ⑤ 错误密码者被明确拒绝 ──
 out('⑤ 错误密码');
-const eve = client('Eve', 'WRONG-PASSWORD', `/tmp/live-Eve.json`, URL_, true);
+const eve = client('Eve', 'WRONG-PASSWORD', undefined, URL_, true);
 const evBad = await eve.wait((e) => e.ev === 'peer_error' && e.code === 'PASSWORD_MISMATCH');
 const evBad2 = await alice.wait((e) => e.ev === 'peer_error' && e.code === 'PASSWORD_MISMATCH', 10000);
 ok(!!(evBad || evBad2), '密码错误 → 双方收到 PASSWORD_MISMATCH（UI 可精确提示）');
@@ -110,7 +111,7 @@ out('⑥ 重连');
 const bobId = bob.events.find((e) => e.ev === 'secured')?.id;
 bob.kill();
 await sleep(3000);
-const bob2 = client('Bob', PW, '/tmp/live-Bob.json');   // 复用身份文件 = 同身份重连
+const bob2 = client('Bob', PW, path.join(os.tmpdir(), 'live-Bob.json'));   // 复用身份文件 = 同身份重连
 const secured2 = await bob2.wait((e) => e.ev === 'secured', 20000);
 ok(!!secured2 && secured2.id === bobId, '重连后 clientId 不变（同一身份密钥决定）', `${bobId} vs ${secured2?.id}`);
 ok(await bob2.wait((e) => e.ev === 'peer_ready', 30000), '重连后与留守成员重新握手');
