@@ -82,25 +82,9 @@ export function addMsg(text, isHistory = false, msgType = 'text', timestamp = nu
 				// Fallback to text only
 				contentHtml = messageText;
 			}
-		} else if (typeof text === 'object' && text.image) {
-			// Legacy single image format: {text: "", image: "data:image..."}
-			const safeImgSrc = escapeHTML(text.image).replace(/javascript:/gi, '');
-			const messageText = text.text ? textToHTML(text.text) : '';
-			
-			if (messageText) {
-				// Mixed content: text + image
-				contentHtml = `<div class="mixed-content">
-					<div class="message-text">${messageText}</div>
-					<img src="${safeImgSrc}" alt="image" class="bubble-img">
-				</div>`;
-			} else {
-				// Image only
-				contentHtml = `<img src="${safeImgSrc}" alt="image" class="bubble-img">`;
-			}
 		} else {
-			// Legacy format: plain image data URL
-			const safeImgSrc = escapeHTML(text).replace(/javascript:/gi, '');
-			contentHtml = `<img src="${safeImgSrc}" alt="image" class="bubble-img">`;
+			// 载荷异常：降级按文本渲染，避免渲染出空气泡
+			contentHtml = typeof text === 'string' ? textToHTML(text) : '';
 		}
 	} else if (msgType === 'file' || msgType === 'file_private') {
 		// Handle file messages
@@ -158,26 +142,10 @@ export function addOtherMsg(msg, userName = '', avatar = '', isHistory = false, 
 				// Fallback to text only
 				contentHtml = messageText;
 			}
-		} else if (typeof msg === 'object' && msg.image) {
-			// Legacy single image format: {text: "", image: "data:image..."}
-			const safeImgSrc = escapeHTML(msg.image).replace(/javascript:/gi, '');
-			const messageText = msg.text ? textToHTML(msg.text) : '';
-			
-			if (messageText) {
-				// Mixed content: text + image
-				contentHtml = `<div class="mixed-content">
-					<div class="message-text">${messageText}</div>
-					<img src="${safeImgSrc}" alt="image" class="bubble-img">
-				</div>`;
-			} else {
-				// Image only
-				contentHtml = `<img src="${safeImgSrc}" alt="image" class="bubble-img">`;
-			}
 		} else {
-			// Legacy format: plain image data URL
-			const safeImgSrc = escapeHTML(msg).replace(/javascript:/gi, '');
-			contentHtml = `<img src="${safeImgSrc}" alt="image" class="bubble-img">`;
-		}
+		// 载荷异常：降级按文本渲染，避免渲染出空气泡
+		contentHtml = typeof msg === 'string' ? textToHTML(msg) : '';
+	}
 	} else if (msgType === 'file' || msgType === 'file_private') {
 		// Handle file messages
 		contentHtml = renderFileMessage(msg, false);	} else {

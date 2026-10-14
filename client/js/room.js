@@ -327,17 +327,6 @@ export function handleClientMessage(idx, msg) {
 		return; // File messages are fully handled.
 	}
 
-	// Handle image messages (both new and legacy formats)
-	if (msgType === 'image' || msgType === 'image_private') {
-		// Already has correct type
-	} else if (!msgType.includes('_private')) {
-		// Handle legacy image detection
-		if (msg.data && typeof msg.data === 'string' && msg.data.startsWith('data:image/')) {
-			msgType = 'image';
-		} else if (msg.data && typeof msg.data === 'object' && msg.data.image) {
-			msgType = 'image';
-		}
-	}
 	let realUserName = msg.userName;
 	if (!realUserName && msg.clientId && newRd.userMap[msg.clientId]) {
 		realUserName = newRd.userMap[msg.clientId].userName || newRd.userMap[msg.clientId].username || newRd.userMap[msg.clientId].name;

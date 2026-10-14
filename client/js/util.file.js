@@ -765,9 +765,3 @@ export function formatFileSize(bytes) {
 	const i = Math.floor(Math.log(bytes) / Math.log(k));
 	return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
 }
-
-// Legacy image send function for backward compatibility
-// 向后兼容的图片发送函数
-export function setupImageSend(config) {
-	setupFileSend(config);
-}
