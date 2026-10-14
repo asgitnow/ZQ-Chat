@@ -16,7 +16,7 @@
 // ═══════════════════════════════════════════════════════════════════════
 import { ristretto255, ristretto255_hasher } from '@noble/curves/ed25519.js';
 import { sha512 } from '@noble/hashes/sha2.js';
-import { randomBytes } from '@noble/hashes/utils.js';
+import { randomBytes, hexToBytes } from '@noble/hashes/utils.js';
 
 const P = ristretto255.Point;
 const enc = (s) => (typeof s === 'string' ? new TextEncoder().encode(s) : s);
@@ -31,6 +31,22 @@ const cmpBytes = (a, b) => {
 	for (let i = 0; i < Math.min(a.length, b.length); i++) if (a[i] !== b[i]) return a[i] - b[i];
 	return a.length - b.length;
 };
+
+const B64C = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+/** base64 → 原始字节。与 zqcrypto.unb64 同语义，独立于此以避免循环依赖。 */
+function b64ToBytes(str) {
+	if (typeof str !== 'string' || !/^[A-Za-z0-9+/]*={0,2}$/.test(str)) throw new Error('bad base64');
+	const clean = str.replace(/=+$/, '');
+	const out = new Uint8Array(Math.floor((clean.length * 3) / 4));
+	let p = 0, buf = 0, bits = 0;
+	for (let i = 0; i < clean.length; i++) {
+		const v = B64C.indexOf(clean[i]);
+		if (v < 0) throw new Error('bad base64 char');
+		buf = (buf << 6) | v; bits += 6;
+		if (bits >= 8) { bits -= 8; out[p++] = (buf >> bits) & 255; }
+	}
+	return out.subarray(0, p);
+}
 
 // —— G_Ristretto255 / H=SHA-512 常量（草案 §6.2、§8.3）——
 export const DSI = enc('CPaceRistretto255');
@@ -129,9 +145,11 @@ export function scalarMultVfy(scalar, peerYaBytes) {
  */
 export function cpaceContext(room, idA, idB, roomNonce, ipkA, ipkB, xpkA, xpkB) {
 	const pair = idA <= idB ? [[idA, ipkA, xpkA], [idB, ipkB, xpkB]] : [[idB, ipkB, xpkB], [idA, ipkA, xpkA]];
-	const [lo, hi] = pair.map(([id]) => id);
-	const [ipkLo, ipkHi] = pair.map(([, k]) => k);
-	const [xpkLo, xpkHi] = pair.map(([, , k]) => k);
+	// 必须解码为原始字节：prepend_len 面向字节串，若直接传字符串会被逐字符转数字，
+	// 字母变 0、数字变字面值 —— 不同 id 会产生相同编码，身份绑定（草案 §10.1）随之失效。
+	const [lo, hi] = pair.map(([id]) => hexToBytes(id));           // 12 hex → 6 字节
+	const [ipkLo, ipkHi] = pair.map(([, k]) => b64ToBytes(k));      // 32 字节公钥
+	const [xpkLo, xpkHi] = pair.map(([, , k]) => b64ToBytes(k));
 	return {
 		sid: sha512(lvCat(enc('zqchat/v2/sid'), enc(room), lo, hi, roomNonce, xpkLo, xpkHi)),
 		CI: lvCat(enc('zqchat/v2/CI'), enc(room), lo, hi, ipkLo, ipkHi),

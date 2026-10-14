@@ -129,8 +129,8 @@ id.seedB64;     // 持久化用
 id.makeBundle(roomNonceBytes);   // → {id, ipk, xpk, kpk, sig, _xsk, _ksk}，_ 前缀为本地秘密
 Identity.verifyBundle(bundle, roomNonceBytes);   // → boolean
 
-id.signHS(to, roomNonceBytes, yaBytes, kemCtBytes);           // → base64
-Identity.verifyHSSig(ipk, sigB64, to, roomNonceBytes, yaBytes, kemCtBytes);  // → boolean
+id.signHS(to, roomNonceBytes, yaBytes, kemCtBytes, epoch);           // → base64；epoch 参与签名
+Identity.verifyHSSig(ipk, sigB64, to, roomNonceBytes, yaBytes, kemCtBytes, epoch);  // → boolean
 ```
 
 `makeBundle` **每次调用都生成新的** X25519 与 ML-KEM 临时密钥，对外只发 `_publicBundle()` 过滤后的部分。

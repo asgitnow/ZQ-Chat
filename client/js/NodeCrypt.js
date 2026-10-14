@@ -338,8 +338,8 @@ class NodeCrypt {
 		const peer = this.channel[peerId];
 		if (!peer || !peer.prep) return;
 		const yaB64 = b64(peer.prep.yaBytes);
-		const sig = this.identity.signHS(peerId, this.roomNonce, peer.prep.yaBytes, kemCtBytes);
 		peer.myHsEpoch = this.epoch;   // 钉死配对轮次 = max(我方 hs.e, 对端 hs.e)，本地计数器不参与（消除两侧不对称竞态）
+		const sig = this.identity.signHS(peerId, this.roomNonce, peer.prep.yaBytes, kemCtBytes, this.epoch);
 		this._send({ t: 'hs', to: peerId, ya: yaB64, kemCt: kemCtBytes ? b64(kemCtBytes) : null, e: this.epoch, sig });
 	}
 
@@ -356,22 +356,19 @@ class NodeCrypt {
 		let yaB = null, ctB = null;
 		try { yaB = msg.ya ? unb64(msg.ya) : null; ctB = msg.kemCt ? unb64(msg.kemCt) : null; }
 		catch { this.logEvent('hs-malformed', msg.from, 'warn'); return; }
-		if (!Identity.verifyHSSig(unb64(peer.bundle.ipk), msg.sig, this.identity.id, this.roomNonce, yaB, ctB)) {
+		// e 参与签名，必须先校验取值范围再验签，否则验签用的 epoch 与实际采用的不一致
+		if (!Number.isSafeInteger(msg.e) || msg.e < 0) {
+			this.logEvent('hs-epoch-invalid', `${msg.from}:${msg.e}`, 'warn');
+			return;
+		}
+		if (!Identity.verifyHSSig(unb64(peer.bundle.ipk), msg.sig, this.identity.id, this.roomNonce, yaB, ctB, msg.e)) {
 			this.logEvent('hs-sig-fail', msg.from, 'warn');
 			this._cb('onPeerError', { clientId: msg.from, code: Err.BAD_BUNDLE });
 			return;
 		}
 		peer.peerYa = yaB;
 		if (ctB) peer.peerKemCt = ctB;
-		if (Number.isInteger(msg.e)) {
-			// hs.e 不在握手签名体内，是对端完全可控的整数；超大幅值由
-			// rotateTo 的步数闸门兜底，这里只挡负数与非安全整数。
-			if (msg.e < 0 || !Number.isSafeInteger(msg.e)) {
-				this.logEvent('hs-epoch-invalid', `${msg.from}:${msg.e}`, 'warn');
-				return;
-			}
-			peer.peerEpoch = msg.e;
-		}
+		peer.peerEpoch = msg.e;
 		if (peer.shared) return;                       // 已配对：忽略（resync 只经由 hsreq 显式重置）
 		if (!peer.peerYa) return;
 		const iAmEncap = this.identity.id < msg.from;

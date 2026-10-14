@@ -8,7 +8,7 @@
 |---|---|
 | `{t:"nonce"}` | 连接建立后第一帧；询问房间权威 roomNonce |
 | `{t:"join", bundle, nonce}` | bundle={id,ipk,xpk,kpk,sig}（sig 覆盖 id‖ipk‖xpk‖kpk‖roomNonce）；nonce=b64(16B) |
-| `{t:"hs", to, ya, kemCt, e, sig}` | 握手材料；封装方(id较小)后发一条带 kemCt 的 hs；sig=Ed25519("zqchat/v2/hs"‖to‖roomNonce‖ya‖kemCt) |
+| `{t:"hs", to, ya, kemCt, e, sig}` | 握手材料；封装方(id较小)后发一条带 kemCt 的 hs；sig=Ed25519("zqchat/v2/hs"‖to‖roomNonce‖epoch(4B)‖ya‖kemCt) |
 | `{t:"ctag", to, tag, e}` | 密码确认标签（16B，root 派生，不混入 epoch） |
 | `{t:"hsreq", to}` | STATE_DESYNC 时请求对端重建会话 |
 | `{t:"msg", to:[id…], c:[wire…]}` | 广播/单聊；c[i] 为 Session.encrypt 的线上包（含 n/e/nonce/ct/to，文件分片另带 f） |

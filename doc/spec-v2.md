@@ -79,6 +79,7 @@ H.s_in_bytes = 128,  H 输出 64 字节,  field_size = 32,  group_size_bits = 25
 
 sid = SHA512( lv_cat("zqchat/v2/sid", roomId, lo, hi, roomNonce, xpkLo, xpkHi) )
 CI  =       lv_cat("zqchat/v2/CI",  roomId, lo, hi, ipkLo, ipkHi)
+                lo/hi = hex 解码的 6 字节身份 id；ipk*/xpk* = base64 解码的 32 字节公钥
 
 生成元（草案 §8.1/§8.3）：
   len_zpad = MAX(0, 128 − len(prepend_len(PRS)) − len(prepend_len(DSI)) − 1)
@@ -105,6 +106,10 @@ ISK = SHA512( lv_cat(DSI_ISK, sid, K) ‖ T )
 
 本项目 `ADa`/`ADb` 传空字节串，采用**对称设置**（`transcript_oc`），因握手无强制发起方/响应方顺序。
 
+`cpaceContext` 的输入必须解码为原始字节再进 `lv_cat`：`prepend_len` 面向字节串，
+若直接传字符串会逐字符转数字（字母→0、数字→字面值），使不同身份 id 产生相同编码，
+草案 §10.1 要求的身份绑定随之失效。id 按 hex 解码为 6 字节，公钥按 base64 解码为 32 字节。
+
 **安全属性**：密码只影响生成元 `G`。攻击者即使猜对密码并掌握全部公开材料（`ya`、`sid`、`CI`），
 也无法离线复现 `ISK`——他缺少对端的临时标量 `a`，因此必须完成一次交互握手才能验证一个猜测。
 
@@ -115,8 +120,8 @@ ISK = SHA512( lv_cat(DSI_ISK, sid, K) ‖ T )
 ```
 1. 双方各自 Session.prepare()：算 sid/CI、跑 cpaceInit 得到 ya 与本地标量
 2. 双方各发 hs{ya, sig, e}，中继原样转发并用连接身份覆盖 from
-   sig = Ed25519( "zqchat/v2/hs" ‖ to ‖ roomNonce ‖ ya ‖ kemCt )
-   （kemCt 为空时按空字节串参与签名）
+   sig = Ed25519( "zqchat/v2/hs" ‖ to ‖ roomNonce ‖ epoch ‖ ya ‖ kemCt )
+   （epoch 为固定 4 字节大端；kemCt 为空时按空字节串参与签名）
 3. 封装方收到对端 ya → pair() 得到 kemCt → 再发一条 hs{ya, kemCt, sig, e}
 4. 解封方收到 kemCt → pair()
 5. 双方计算 root，各自发送 ctag
@@ -126,8 +131,12 @@ ISK = SHA512( lv_cat(DSI_ISK, sid, K) ‖ T )
 `Session.pair(..., epoch)` 在建链后钉死起始轮次 `rotateTo(epoch, EPOCH_MAX_STEPS)`。
 取双方 `hs.e` 的最大值以消除成员广播到达顺序差导致的链路分叉。
 
-`hs.e` **不在签名体内**，是对端完全可控的整数。`_onHs` 拒绝负数与非安全整数；
-即便放行，`rotateTo` 的步数闸门（默认 64，上限内才放行）也会拒绝超大跳变并抛 `STATE_DESYNC`。
+`epoch` 必须纳入签名：它经 `initEpoch` 进入 `rotateTo` 并直接影响 root 派生。
+留在签名外会让中继得以改写配对轮次，表现为双方 root 不同、`confirmTag` 不匹配——
+而该失败会被误报成"密码错误"，把排查方向引偏。纳入签名后篡改在验签阶段即被拒（`BAD_BUNDLE`）。
+
+`_onHs` 先校验 `e` 为非负安全整数再验签，确保验签所用 epoch 与实际采用的一致；
+另有 `rotateTo` 的步数闸门兜底超大跳变。
 
 ## 8. 密钥派生
 
@@ -237,10 +246,24 @@ Durable Object 以 `idFromName(roomHash)` 分房间。`from` 字段一律以连�
 - 服务器零密钥：中继只见 bundle 与密文
 - 密码不可离线爆破（§6）
 - 密码错误显式可辨，不泄露明文
-- 握手材料抗重放（`sig` 覆盖 ya/kemCt）
+- 握手材料抗重放（`sig` 覆盖 ya/kemCt/epoch）
 - 混合后量子握手（X25519 + ML-KEM-768）
 - AEAD 绑定收发方、房间、序号与 epoch
 - 安全码可检测中继替换会话
+
+**密钥泄露边界**
+
+| 泄露对象 | 后果 |
+|---|---|
+| 中继数据 | 它本就不保存消息 |
+| 单条消息密钥 | 仅该条 |
+| 长期 Ed25519 身份密钥（事后窃取） | 过去会话仍安全——X25519/ML-KEM 临时密钥不落盘 |
+| **当前会话 root** | **该会话全部内容，含未来所有轮次** |
+
+- `root` 常驻 Session 对象；epoch 轮换为 `KDF(root, …)` 确定性派生，**不引入新的独立秘密**。
+- 因此具备对身份密钥泄露的前向安全，但**不具备泄露后恢复能力**。
+- 与 Signal 的 Double Ratchet 有本质差距，未实现；实现需每轮 DH 棘轮 + 跳过密钥存储。
+- "无历史消息"仅指**中继侧不保留记录**，不构成对自行录制密文的保护。
 
 **已知取舍**
 
@@ -251,5 +274,5 @@ Durable Object 以 `idFromName(roomHash)` 分房间。`from` 字段一律以连�
 - **Argon2 参数取 OWASP 最低档**（t=2, 19 MiB, p=1），换取移动端可用性。
 - **长载荷不填充**，泄露长度。
 - **在线猜测残余风险**为 PAKE 固有：一次交互验证一个猜测。当前限流仅在单连接维度。
-- **身份私钥存于 localStorage**，XSS 即失长期身份（历史消息不受影响，无历史可泄）。
+- **身份私钥存于 localStorage**，XSS 即失长期身份；该风险不影响已结束的会话。
 - **安全码比对是人工步骤**，无密码房间若用户不比对则等于无 MITM 防护。

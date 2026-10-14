@@ -55,6 +55,13 @@ export function unb64(str) {
 }
 const hex = (u8) => Array.from(u8, (b) => b.toString(16).padStart(2, '0')).join('');
 
+// epoch 参与签名时固定 4 字节大端，避免 "1" 与 01 之类的文本歧义
+const epochBytes = (e) => {
+  const b = new Uint8Array(4);
+  new DataView(b.buffer).setUint32(0, (e >>> 0) & 0xffffffff, false);
+  return b;
+};
+
 export const KDF = (ikm, salt, info, len = 32) => hkdf(sha256, enc(ikm), enc(salt), enc(info), len);
 export const PROTO = 'zqchat/v2';
 export const ROOM_NONCE_LEN = 16;
@@ -138,15 +145,17 @@ export class Identity {
       return Identity.verify(unb64(b.sig), body, ipk);
     } catch { return false; }
   }
-  /** 握手材料签名（ADD-HSSIG）：sigHS = "zqchat/v2/hs" ‖ to ‖ roomNonce ‖ ya ‖ kemCt */
-  signHS(to, roomNonceBytes, yaBytes, kemCtBytes) {
+  /** 握手材料签名：sigHS = "zqchat/v2/hs" ‖ to ‖ roomNonce ‖ epoch ‖ ya ‖ kemCt
+   *  epoch 必须纳入签名：它经 initEpoch 进入 rotateTo 并影响 root 派生，
+   *  留在签名外等于允许中继改写配对轮次（表现为 confirmTag 不匹配）。 */
+  signHS(to, roomNonceBytes, yaBytes, kemCtBytes, epoch) {
     return b64(this.sign(concat(enc(`${PROTO}/hs`), enc(to), roomNonceBytes,
-      yaBytes || new Uint8Array(0), kemCtBytes || new Uint8Array(0))));
+      epochBytes(epoch), yaBytes || new Uint8Array(0), kemCtBytes || new Uint8Array(0))));
   }
-  static verifyHSSig(ipkBytes, sigB64, to, roomNonceBytes, yaBytes, kemCtBytes) {
+  static verifyHSSig(ipkBytes, sigB64, to, roomNonceBytes, yaBytes, kemCtBytes, epoch) {
     try {
       return Identity.verify(unb64(sigB64), concat(enc(`${PROTO}/hs`), enc(to), roomNonceBytes,
-        yaBytes || new Uint8Array(0), kemCtBytes || new Uint8Array(0)), ipkBytes);
+        epochBytes(epoch), yaBytes || new Uint8Array(0), kemCtBytes || new Uint8Array(0)), ipkBytes);
     } catch { return false; }
   }
 }

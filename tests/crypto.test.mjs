@@ -95,7 +95,7 @@ console.log('\n② 密码安全');
 		A.bundle.ipk, B.bundle.ipk, A.bundle.xpk, B.bundle.xpk);
 	const scalarOf = (byte) => ristretto255_hasher.hashToScalar(new Uint8Array(32).fill(byte));
 	const aA = scalarOf(1), aB = scalarOf(2);
-	const GTrue = calculateGenerator(prs, sid, CI);
+	const GTrue = calculateGenerator(prs, CI, sid);
 	const yaA = GTrue.multiply(aA).toBytes();
 	const yaB = GTrue.multiply(aB).toBytes();
 	const iskTrue = cpaceFinish(aA, yaB, yaA, sid, CI);
@@ -108,7 +108,7 @@ console.log('\n② 密码安全');
 	const dict = ['company', 'secrets', 'hunter2', 'password', '123456', 'PW-别的', ''];
 	let leaked = 0;
 	for (const guess of dict) {
-		const Gw = calculateGenerator(stretchArgon2id(guess, ROOM), sid, CI);
+		const Gw = calculateGenerator(stretchArgon2id(guess, ROOM), CI, sid);
 		const yaAw = Gw.multiply(aA).toBytes();
 		const yaBw = Gw.multiply(aB).toBytes();
 		if (b64(cpaceFinish(aA, yaBw, yaAw, sid, CI)) === b64(iskTrue)) leaked++;
@@ -351,6 +351,50 @@ console.log('\n⑧ 秘密驻留清理');
 	const late = sTx.encrypt({ a: 'm', t: 'text', d: 'catchup' });
 	ok(sRx.decrypt(late).d === 'catchup', '跨 3 序号追赶（中间 mk 已清零）仍正确解密');
 	ok(sRx.decrypt(sTx.encrypt({ a: 'm', t: 'text', d: 'seq4' })).d === 'seq4', '追赶后链路继续可用');
+}
+
+// ═════ ⑩ CPace 应用层输入的编码绑定 ═════
+// 官方向量只用真实字节、不经过 cpaceContext，故原语全绿也无法发现这里的编码错误。
+console.log('\n⑩ cpaceContext 输入编码');
+{
+	const rn = nonceOf(51);
+	const idA = 'a1b2c3d4e5f6', idB = 'b1b2c3d4e5f6';
+	const ipk = b64(new Uint8Array(32).fill(7));
+	const xpk = b64(new Uint8Array(32).fill(9));
+	const ctx = cpaceContext(ROOM, idA, idB, rn, ipk, ipk, xpk, xpk);
+
+	// CI 必须含原始 32 字节公钥，而不是 base64 文本被逐字符转数字的产物
+	const ipkBytes = unb64(ipk);
+	const has = (hay, needle) => hay.some((_, i) => needle.every((v, j) => hay[i + j] === v));
+	ok(has(ctx.CI, ipkBytes), 'CI 内含 32 字节原始公钥', `ipk=${ipkBytes.length}B`);
+	// 身份 id 必须 hex 解码成 6 字节
+	ok(has(ctx.CI, unb64(b64(Uint8Array.from(
+		Uint8Array.from({ length: 6 }, (_, i) => parseInt(idA.slice(i * 2, i * 2 + 2), 16)))))),
+		'CI 内含 hex 解码后的 6 字节身份 id');
+	// 旧编码下这三个 id 会编码成同一串字节，身份绑定失效
+	const ctx2 = cpaceContext(ROOM, 'a1b2c3d4e5a6', idB, rn, ipk, ipk, xpk, xpk);
+	ok(b64(ctx.CI) !== b64(ctx2.CI), '不同身份 id 产生不同 CI（旧编码下 a1…f6 与 a1…a6 碰撞）');
+	ok(b64(ctx.sid) !== b64(cpaceContext(ROOM, idA, idB, rn, ipk, ipk, xpk, b64(new Uint8Array(32).fill(10))).sid),
+		'sid 绑定双方 xpk（每次加入 xpk 重新生成 → sid 每次会话唯一）');
+	// 顺带固定形参顺序：sid 与 CI 互换必须改变结果
+	const prsT = stretchArgon2id('pw', ROOM);
+	ok(b64(calculateGenerator(prsT, ctx.CI, ctx.sid).toBytes()) !== b64(calculateGenerator(prsT, ctx.sid, ctx.CI).toBytes()),
+		'calculateGenerator(PRS, CI, sid) 形参顺序不可交换');
+}
+
+// ═════ ⑪ epoch 纳入握手签名 ═════
+console.log('\n⑪ epoch 纳入握手签名');
+{
+	const rn = nonceOf(52);
+	const prsE = stretchArgon2id('pw', ROOM);
+	const X = bundleWith(makePeer(91), rn), Y = bundleWith(makePeer(92), rn);
+	const pa = Session.prepare(X.bundle, Y.bundle, prsE, ROOM, rn);
+	const s0 = X.id.signHS(Y.bundle.id, rn, pa.yaBytes, null, 3);
+	ok(Identity.verifyHSSig(X.id.pk, s0, Y.bundle.id, rn, pa.yaBytes, null, 3), 'epoch=3 的 hs 签名验签通过');
+	ok(!Identity.verifyHSSig(X.id.pk, s0, Y.bundle.id, rn, pa.yaBytes, null, 4),
+		'改写 epoch 后验签失败（中继无法再篡改配对轮次）');
+	ok(!Identity.verifyHSSig(X.id.pk, s0, X.bundle.id, rn, pa.yaBytes, null, 3),
+		'改写 to 后验签失败');
 }
 
 // ═════ ⑨ 文档引用的符号未漂移 ═════
