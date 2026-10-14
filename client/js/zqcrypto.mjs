@@ -300,6 +300,7 @@ export class Session {
         else { state.chain = chain; state.seq = seq; }
         return JSON.parse(dec(unpadPayload(pt)));
       }
+      mk.fill(0);      // 跳过序号派生的中间消息密钥同样清零
       chain = KDF(chain, this.roomId, `${PROTO}/chain${seq}`);
       seq++;
     }

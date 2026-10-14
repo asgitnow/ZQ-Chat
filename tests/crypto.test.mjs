@@ -340,5 +340,18 @@ console.log('\n⑥ 身份与其他');
 console.log('\n⑦ CPace 草案官方测试向量（draft-irtf-cfrg-cpace-21 附录 B.3）');
 checkVectors((c, n, x = '') => ok(c, n, x));
 
+// ═════ ⑧ 秘密驻留清理 ═════
+console.log('\n⑧ 秘密驻留清理');
+{
+	const rn = nonceOf(41);
+	const X = bundleWith(makePeer(81), rn), Y = bundleWith(makePeer(82), rn);
+	const [sTx, sRx] = handshake(X, Y, stretchArgon2id('pw', ROOM), rn);
+	ok(sRx.decrypt(sTx.encrypt({ a: 'm', t: 'text', d: 'seq0' })).d === 'seq0', '同序解密正常');
+	for (let i = 1; i <= 3; i++) sTx.encrypt({ a: 'm', t: 'text', d: 'drop' + i });
+	const late = sTx.encrypt({ a: 'm', t: 'text', d: 'catchup' });
+	ok(sRx.decrypt(late).d === 'catchup', '跨 3 序号追赶（中间 mk 已清零）仍正确解密');
+	ok(sRx.decrypt(sTx.encrypt({ a: 'm', t: 'text', d: 'seq4' })).d === 'seq4', '追赶后链路继续可用');
+}
+
 console.log(`\n${'═'.repeat(60)}\n结果: ${pass} 项通过, ${fail} 项失败\n${'═'.repeat(60)}`);
 process.exit(fail ? 1 : 0);

@@ -168,7 +168,18 @@ class NodeCrypt {
 		this.credentials = null;
 		this.prs = null;
 		this._prsCache = null;
+		this._wipeBundle();
 		return true;
+	}
+
+	// 退出房间时清零会话临时密钥
+	_wipeBundle() {
+		const b = this.bundle;
+		if (!b) return;
+		for (const k of ['_xsk', '_ksk']) {
+			if (b[k] instanceof Uint8Array) b[k].fill(0);
+		}
+		this.bundle = null;
 	}
 
 	disconnect() {
@@ -386,6 +397,8 @@ class NodeCrypt {
 			this.logEvent('pair-fail', `${msg.from}:${e.code || e.message}`, 'warn');
 			return;
 		}
+		// pair 已用完标量；yaBytes 是公开值，_sendHs 重发仍需
+		if (typeof peer.prep.scalar === 'bigint') peer.prep.scalar = 0n;
 	}
 
 	_sendCtag(peerId) {
