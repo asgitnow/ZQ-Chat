@@ -33,7 +33,7 @@
 
 | | 原版 | 本版 |
 |---|---|---|
-| 密码参与方式 | `ECDH_ss XOR SHA256(密码)` | CPace 变体 PAKE，密码只参与生成元 `G = hashToCurve(prs, sid, CI)` |
+| 密码参与方式 | `ECDH_ss XOR SHA256(密码)` | CPace PAKE（draft-irtf-cfrg-cpace，套件 `CPACE-RISTR255-SHA512`），密码只参与生成元 `G` |
 | 离线爆破 | 可行（SHA256 无记忆开销） | 不可行：验证一个猜测必须完成一次交互握手 |
 | 密码错误 | 解密出乱码，无法归因 | 双向 `confirmTag`，明确 `PASSWORD_MISMATCH` |
 | 握手密钥 | Curve25519 | X25519 + ML-KEM-768 混合（PQC） |
@@ -70,16 +70,21 @@
 
 ### 房间密码机制
 
-房间密码通过 **PAKE（CPace 变体，Ristretto255）** 参与密钥协商，不直接拼入密钥：
+房间密码通过 **CPace**（[draft-irtf-cfrg-cpace](https://datatracker.ietf.org/doc/draft-irtf-cfrg-cpace/)，
+密码套件 `CPACE-RISTR255-SHA512`）参与密钥协商，不直接拼入密钥：
 
 ```
-prs  = Argon2id(房间密码, salt = sha256(房间名))               // 密码拉伸 t=2, m=19MiB, p=1
-G    = hashToCurve("CPaceRistretto255-1" ‖ prs ‖ sid ‖ CI)     // 密码只影响这一步
-ya   = G · a                                                    // 双方各自随机标量
-ISK  = SHA512(DSI ‖ sid ‖ y_lo ‖ y_hi ‖ (Y_peer · a) ‖ CI)
+prs  = Argon2id(房间密码, salt = sha256(房间名))              // 密码拉伸 t=2, m=19MiB, p=1
+G    = element_derivation( SHA512( lv_cat(DSI, prs, zero_bytes(len_zpad), CI, sid) ) )
+ya   = G · a                                                   // 双方各自随机标量
+ISK  = SHA512( lv_cat("CPaceRistretto255_ISK", sid, Y_peer·a) ‖ transcript_oc(ya, y_peer) )
 root = HKDF-SHA256(X25519_共享密钥 ‖ ML-KEM-768_共享密钥 ‖ ISK,
                    info = "zqchat/v2/root{lo}{hi}")
 ```
+
+CPace 部分逐函数对应草案原文（`prepend_len` / `lv_cat` / `o_cat` / `generator_string` /
+`calculate_generator` / `sample_scalar` / `scalar_mult_vfy` / `transcript_oc`），未作简化，
+并以草案附录 B.3 的官方测试向量逐字节验证（`node tests/cpace-vectors.mjs`）。
 
 - **不可离线爆破**：攻击者即便持有全部公开材料（`ya`、`sid`、`CI`）并猜对密码，也无法离线复现 `ISK`，必须完成一次交互才能验证一个猜测。
 - **密码错误可辨**：握手末尾交换双向 `confirmTag`（16B），不匹配即 `PASSWORD_MISMATCH` 并丢弃该会话，双方读不到任何明文。
@@ -98,7 +103,7 @@ root = HKDF-SHA256(X25519_共享密钥 ‖ ML-KEM-768_共享密钥 ‖ ISK,
 |---|---|
 | 身份 | Ed25519 长期密钥对，`id = sha256(公钥)[:12]`；bundle 由身份密钥签名，中继验签失败即拒（`BAD_BUNDLE`） |
 | 握手 | X25519 + ML-KEM-768 混合（PQC），`(ya, kemCt)` 单独签名防重放 |
-| 密钥协商 | CPace 变体 PAKE，密码错误显式可辨 |
+| 密钥协商 | CPace PAKE（对齐草案官方实现），密码错误显式可辨 |
 | 消息加密 | XChaCha20-Poly1305，AAD 绑定 `from/to/room/n/epoch` 与文件分片元数据 |
 | 密钥轮换 | epoch 驱动、零往返；成员变化时服务器广播 +1（5s 合并窗口） |
 | 重放防护 | 单向消息密钥链 + 每轮 seq 去重窗口 |
@@ -121,9 +126,9 @@ sequenceDiagram
     S-->>O: member.add(C.bundle, epoch)
 
     par 双方各自准备
-        C->>C: G ← hashToCurve(prs, sid, CI)
+        C->>C: G ← calculate_generator(prs, CI, sid)
         C->>C: ya = G · a
-        O->>O: G ← hashToCurve(prs, sid, CI)
+        O->>O: G ← calculate_generator(prs, CI, sid)
         O->>O: yb = G · b
     end
 
@@ -165,13 +170,13 @@ sequenceDiagram
 | 路径 | 职责 |
 |---|---|
 | `client/js/zqcrypto.mjs` | Identity / Session / Argon2id / 填充 / 令牌桶 |
-| `client/js/zqcpace.mjs` | CPace 变体 PAKE（Ristretto255） |
+| `client/js/zqcpace.mjs` | CPace PAKE，对齐 draft-irtf-cfrg-cpace |
 | `client/js/NodeCrypt.js` | 握手状态机、消息链、重连退避（浏览器 + Node） |
 | `client/js/argon.worker.js` | Argon2id 置于 Web Worker，避免阻塞 UI |
 | `worker/` | Worker 盲中继，Durable Object 按房间分片 |
 | `headless/zqchat.mjs` | CLI 通道 |
 | `echbridge/` | Go TLS ECH 桥（本地直接接入的有效通道，部署无关） |
-| `tests/` | 密码学单元 87 项（含 CPace 官方向量 15 项）+ 中继 E2E 34 项 |
+| `tests/` | 密码学单元 90 项（含 CPace 官方向量 15 项）+ 中继 E2E 34 项 |
 
 ## 测试
 

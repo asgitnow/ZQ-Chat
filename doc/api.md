@@ -16,7 +16,11 @@ import {
   ROOM_NONCE_LEN, EPOCH_MAX_STEPS,
   TokenBucket,
 } from './client/js/zqcrypto.mjs';
-import { cpaceContext, cpaceInit, cpaceFinish, cpaceGenerator } from './client/js/zqcpace.mjs';
+import {
+  cpaceContext, cpaceInit, cpaceFinish,
+  calculateGenerator, generatorString, sampleScalar, scalarMultVfy,
+  prependLen, lvCat, oCat, transcriptIr, transcriptOc, DSI,
+} from './client/js/zqcpace.mjs';
 ```
 
 ## 2. NodeCrypt
@@ -229,7 +233,8 @@ const nc = new NodeCrypt({
 `roomHash` 须与客户端一致：`hex(SHA256(房间名))`。同一 `storage` 复用同一身份。
 
 ```bash
-node tests/crypto.test.mjs      # 密码学单元测试（69 项）
+node tests/crypto.test.mjs      # 密码学单元测试（90 项）
 node tests/e2e-relay.test.mjs   # 真实中继 + 真实客户端端到端（34 项）
+node tests/cpace-vectors.mjs    # CPace 草案官方测试向量（15 项）
 node tests/live-e2e.mjs --url wss://host --room r --pass pw   # 打真实部署
 ```

@@ -353,5 +353,13 @@ console.log('\n⑧ 秘密驻留清理');
 	ok(sRx.decrypt(sTx.encrypt({ a: 'm', t: 'text', d: 'seq4' })).d === 'seq4', '追赶后链路继续可用');
 }
 
+// ═════ ⑨ 文档引用的符号未漂移 ═════
+console.log('\n⑨ 文档与源码一致性');
+{
+	const { checkDocRefs } = await import('./doc-refs.mjs');
+	const bad = checkDocRefs();
+	ok(bad === 0, '文档引用的模块导出全部存在', bad ? `${bad} 处失效` : 'README / spec / api 全部有效');
+}
+
 console.log(`\n${'═'.repeat(60)}\n结果: ${pass} 项通过, ${fail} 项失败\n${'═'.repeat(60)}`);
 process.exit(fail ? 1 : 0);
