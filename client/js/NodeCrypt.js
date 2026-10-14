@@ -1,4 +1,4 @@
-// ZQ-Chat v2 —— 端到端加密客户端（替换 v1 NodeCrypt）
+// ZQ-Chat v2 —— 端到端加密客户端
 //
 // 实现《ZQ-Chat-加密协议规格-v2》：X25519+ML-KEM-768 混合握手、
 // CPace 风格 PAKE、XChaCha20-Poly1305+AAD、消息密钥链、epoch 密钥轮换。
@@ -20,7 +20,7 @@ class NodeCrypt {
 		this.config = {
 			wsAddress: config.wsAddress || '',
 			wsFactory: config.wsFactory || null,             // 测试/代理环境注入连接构造器
-			debug: config.debug || false,                 // v2: 只打元数据，绝不打载荷（修复 v1 缺陷 #14）
+			debug: config.debug || false,                 // 只打元数据，绝不打载荷
 			pingInterval: config.pingInterval || 20000,
 			reconnectBase: config.reconnectBase || 1000,   // 修复 v1 固定 3s：指数退避
 			reconnectMax: config.reconnectMax || 30000,
@@ -300,7 +300,7 @@ class NodeCrypt {
 	async _addPeer(bundle) {
 		if (!bundle || bundle.id === this.identity.id) return;
 		if (!Identity.verifyBundle(bundle, this.roomNonce)) {
-			this.logEvent('bad-bundle', bundle.id, 'warn');       // 丢弃未认证密钥包（v1 缺陷 #1 的修复点）
+			this.logEvent('bad-bundle', bundle.id, 'warn');       // 丢弃未认证密钥包
 			this._cb('onPeerError', { clientId: bundle.id, code: Err.BAD_BUNDLE });
 			return;
 		}
@@ -526,7 +526,7 @@ class NodeCrypt {
 		catch (e) { this.logEvent('decryptClientMessage', e.code || e.message, 'warn'); return {}; }
 	}
 
-	// v2：服务器信封为明文 JSON（不再加密）。保留 v1 签名；key 参数被忽略。
+	// 服务器信封为明文 JSON（服务器零密钥，无需加密）。key 参数仅为兼容旧签名保留，已忽略。
 	encryptServerMessage(message, key) {
 		try {
 			if (message && message.a === 'c') {

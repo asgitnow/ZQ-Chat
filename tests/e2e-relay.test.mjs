@@ -187,12 +187,11 @@ console.log('\n⑧ 重连');
   ok(await until(() => {
     const securedEvts = B.ev.filter((e) => e.t === 'secured');
     return securedEvts.length >= 2 && securedEvts[securedEvts.length - 1].id === idBefore;
-  }, 9000), '重连完成握手且 clientId 不变（v1 缺陷 #10 修复）');
+  }, 9000), '重连完成握手且 clientId 不变');
   ok(B.nc.identity.id === idBefore, '身份 id 恒定', idBefore);
   // 必须等 A↔B 的会话重建完成：relay 层 secured 只说明 B 进了中继房间，
   // 而对端会话还要走 hs → kemCt → pair → ctag → 交换用户名。
-  // 在 username 就位前 sendChannelMessage 会按设计跳过该 peer 并返回 false（未送达），
-  // 那不是丢消息，是发送时机太早 —— 修复前本用例因此恒失败。
+  // username 就位前 sendChannelMessage 会按设计跳过该 peer 并返回 false。
   ok(await until(() => A.peers.size === 1 && B.peers.size === 1, 9000), '重连后与对端会话重建完成');
   A.nc.sendChannelMessage('text', '重连后我还能收到');
   ok(await until(() => B.ev.some((e) => e.t === 'msg' && e.data === '重连后我还能收到'), 9000), '重连后消息恢复（重连即新会话）');

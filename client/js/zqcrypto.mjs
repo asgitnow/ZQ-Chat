@@ -1,17 +1,12 @@
 // ═══════════════════════════════════════════════════════════════════════
 //  ZQ-Chat v2 核心密码学 —— Identity / Session / 填充 / Argon2id 拉伸
 //
-//  依据《ZQ-Chat-加密协议规格-v2》实施，相对参考实现的审计修正：
-//   · [FIX-PAD]  pad/unpad 边界修正：长度 8190~8191 的载荷过去会加密成
-//                恰好 8192B 的填充、解密端按"超长不剥填充"原样返回而必然
-//                JSON.parse 失败。现统一以首字节 == 1 判定是否填充。
-//   · [FIX-KEM]  封装方强制为 id 较小一方，写进断言，防止双端都封装导致
-//                root 静默不一致。
-//   · [FIX-CONF] confirmTag 不再混入 epoch：成员变化与 ctag 交换存在竞态，
-//                混入 epoch 会让双方算出不同标签 → 误报"密码错误"。
-//                root 本身随轮换前进，标签仍唯一绑定本次握手。
-//   · [ADD-HSSIG] 握手材料 (ya, kemCt) 由身份密钥签名，接收端验签，
-//                阻断中继端旧 hs 消息重放造成的会话混乱。
+//  依据《ZQ-Chat-加密协议规格-v2》实施。三处实现约束务必保留：
+//   · pad/unpad 以首字节 == 1 判定是否填充，而非按长度：长度 8190~8191
+//     的载荷会恰好填满 8192，按长度判定将无法剥离。
+//   · ML-KEM 封装方固定为 id 较小一方，防止双端各自封装导致 root 静默不一致。
+//   · confirmTag 不混入 epoch：成员变化与 ctag 交换存在竞态，混入会让双方
+//     算出不同标签 → 误报"密码错误"。root 随轮换前进，标签仍唯一绑定本次握手。
 // ═══════════════════════════════════════════════════════════════════════
 import { ml_kem768 } from '@noble/post-quantum/ml-kem.js';
 import { xchacha20poly1305 } from '@noble/ciphers/chacha.js';
@@ -115,7 +110,7 @@ export class Identity {
   constructor(seed) {
     this.sk = seed ? (seed instanceof Uint8Array ? seed : unb64(seed)) : ed25519.utils.randomSecretKey();
     this.pk = ed25519.getPublicKey(this.sk);
-    // 12 hex = 48 bit；重连后恒定不变（v1 缺陷 #10 的修复来源）
+    // 12 hex = 48 bit；重连后恒定不变，且必须由本 bundle 的 ipk 导出
     this.id = hex(sha256(this.pk)).slice(0, 12);
     this.seedB64 = b64(this.sk);
   }
@@ -135,8 +130,12 @@ export class Identity {
   static verifyBundle(b, roomNonceBytes) {
     if (!b || typeof b.id !== 'string' || !/^[0-9a-f]{12}$/.test(b.id)) return false;
     try {
-      const body = concat(enc(b.id), unb64(b.ipk), unb64(b.xpk), unb64(b.kpk), roomNonceBytes);
-      return Identity.verify(unb64(b.sig), body, unb64(b.ipk));
+      const ipk = unb64(b.ipk);
+      // id 必须由该 bundle 的身份公钥导出：签名只能证明"持有 ipk 的私钥"，
+      // 不能证明"这个 id 属于 ipk"。缺此绑定，持有任意私钥者即可冒用他人 id。
+      if (hex(sha256(ipk)).slice(0, 12) !== b.id) return false;
+      const body = concat(enc(b.id), ipk, unb64(b.xpk), unb64(b.kpk), roomNonceBytes);
+      return Identity.verify(unb64(b.sig), body, ipk);
     } catch { return false; }
   }
   /** 握手材料签名（ADD-HSSIG）：sigHS = "zqchat/v2/hs" ‖ to ‖ roomNonce ‖ ya ‖ kemCt */
@@ -269,14 +268,14 @@ export class Session {
       throw new CryptoError(Err.STALE_EPOCH, `epoch ${e} < ${this.epoch}`);
     }
     // 本轮去重必须在本轮状态内判定：若先于轮次分支检查，
-    // 上一轮同序号在途消息会被本轮 recvSeen 误杀（实测修复）
+    // 上一轮同序号在途消息会被本轮 recvSeen 误杀，故去重必须在轮次分支内判定
     if (this.recvSeen.has(n)) throw new CryptoError(Err.REPLAY, `seq ${n} used`);
     return this._decryptWith(this, n, nonce, ct, e, f);
   }
 
   _decryptWith(state, n, nonce, ct, e, f) {
-    // 上一轮状态对象字段是 {chain, seq}，本轮是 {recvChain, recvSeq}（审计发现：
-    // 参考实现两处混用 state.recvSeq，导致 prev 链从未真正生效）
+    // 上一轮状态对象字段是 {chain, seq}，本轮是 {recvChain, recvSeq}，
+    // 两处混用会让 prev 链从未真正生效
     const curSeq = state.seq === undefined ? state.recvSeq : state.seq;
     if (n < curSeq - 64) throw new CryptoError(Err.REPLAY, 'too old');
     if (n >= curSeq + 4096) throw new CryptoError(Err.STATE_DESYNC, 'seq jump too large');

@@ -34,8 +34,7 @@ export function b64enc(u8) {
   return s;
 }
 
-// v1 缺陷 #8 修复：旧实现 `level !== 'debug' || true` 恒真，且会打印解密后的载荷。
-// v2 日志只允许元数据（id、错误码、计数），绝不接触消息内容。
+// 日志只允许元数据（id、错误码、计数），绝不接触消息内容。
 export function logEvent(source, meta) {
   console.log(`[${new Date().toISOString()}] ${source}${meta !== undefined ? ': ' + meta : ''}`);
 }

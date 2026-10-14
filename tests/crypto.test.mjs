@@ -1,10 +1,11 @@
-// ZQ-Chat v2 密码学单元测试 —— 覆盖规格 §13 全部类别 + 审计修正项
+// ZQ-Chat v2 密码学单元测试 —— 覆盖规格 §13 全部类别
 // 运行: node tests/crypto.test.mjs
 import {
 	Identity, Session, Err, padPayload, unpadPayload, b64, unb64,
 	TokenBucket, stretchArgon2id, ROOM_NONCE_LEN, EPOCH_MAX_STEPS,
 } from '../client/js/zqcrypto.mjs';
-import { cpaceFinish } from '../client/js/zqcpace.mjs';
+import { cpaceFinish, cpaceContext, cpaceGenerator } from '../client/js/zqcpace.mjs';
+import { ristretto255_hasher } from '@noble/curves/ed25519.js';
 
 let pass = 0, fail = 0;
 const ok = (cond, name, extra = '') => {
@@ -84,33 +85,49 @@ console.log('\n② 密码安全');
 	const [, sB] = handshake(A, B, prs, rn);
 	const ctag = sB.confirmTag();
 
-	// ── 离线字典攻击（可证伪）──
-	// 性质：攻击者持有全部公开材料（双方 ya、sid、CI、roomNonce、bundle）+ 字典，
-	// 却拿不到对方的临时标量 scalar，因此无法离线复现 ISK。
-	// 判别力保证：两侧都是真正的 64B ISK，同型同长，判等在原理上可达。
-	// （修复前：拿 b64(全零32B)（44 字符）与 ctag（24 字符）比较，类型都不一致，
-	//   无论实现有无漏洞都恒不相等 —— 一条永远不会红的假测试。）
-	const preA = Session.prepare(A.bundle, B.bundle, prs, ROOM, rn);
-	const preB = Session.prepare(B.bundle, A.bundle, prs, ROOM, rn);
-	const genuineISK = cpaceFinish(preA.scalar, preB.yaBytes, preA.yaBytes, preA.sid, preA.CI);
-	const sameInput = cpaceFinish(preA.scalar, preB.yaBytes, preA.yaBytes, preA.sid, preA.CI);
-	ok(b64(sameInput) === b64(genuineISK) && genuineISK.length === 64,
-		'正控：同型同长的 ISK 可以判等（排除"类型/长度导致恒假"，证明下面的不等比较有意义）');
+	// ── CPace 密码绑定性（可证伪）──
+	//
+	// 固定临时值（同一对标量与 ya），只变 prs。
+	// 若 prs 不参与生成元 G，错误密码会算出同一个 G、同一个 ya、同一个 ISK，断言即变红。
+	// 反之，若每次猜测都重新 prepare()，随机 ya 必然不同，断言会无条件通过。
+	const { sid, CI } = cpaceContext(ROOM, A.bundle.id, B.bundle.id, rn, A.bundle.ipk, B.bundle.ipk);
+	const scalarOf = (byte) => ristretto255_hasher.hashToScalar(new Uint8Array(32).fill(byte));
+	const aA = scalarOf(1), aB = scalarOf(2);
+	const GTrue = cpaceGenerator(prs, sid, CI);
+	const yaA = GTrue.multiply(aA).toBytes();
+	const yaB = GTrue.multiply(aB).toBytes();
+	const iskTrue = cpaceFinish(aA, yaB, yaA, sid, CI);
 
-	const dict = ['company-secrets', 'company', 'secrets', 'hunter2', 'password', '123456', ''];
-	let cracked = 0, attempts = 0;
-	const t0 = Date.now();
+	// 正控：同输入必须可复现 —— 证明下面的不等比较不是因为类型/长度而恒真
+	ok(b64(cpaceFinish(aA, yaB, yaA, sid, CI)) === b64(iskTrue) && iskTrue.length === 64,
+		'正控：同型同长的 ISK 可以判等（等号在本测试中是可达的）');
+
+	// 可证伪核心：固定 ya 与标量，仅改密码 → ISK 必须改变
+	const dict = ['company', 'secrets', 'hunter2', 'password', '123456', 'PW-别的', ''];
+	let leaked = 0;
 	for (const guess of dict) {
-		// 攻击者密码【猜对】、掌握全部公开材料，只缺对方 scalar —— 最强攻击者
-		const pAtk = Session.prepare(A.bundle, B.bundle, stretchArgon2id(guess, ROOM), ROOM, rn);
-		try {
-			const atkISK = cpaceFinish(pAtk.scalar, preB.yaBytes, pAtk.yaBytes, pAtk.sid, pAtk.CI);
-			attempts++;
-			if (b64(atkISK) === b64(genuineISK)) cracked++;
-		} catch { /* 该猜测的标量构造不出有效点，忽略 */ }
+		const Gw = cpaceGenerator(stretchArgon2id(guess, ROOM), sid, CI);
+		const yaAw = Gw.multiply(aA).toBytes();
+		const yaBw = Gw.multiply(aB).toBytes();
+		if (b64(cpaceFinish(aA, yaBw, yaAw, sid, CI)) === b64(iskTrue)) leaked++;
 	}
-	ok(cracked === 0 && attempts > 0, '离线字典攻击不可行：持公开材料 + 正确密码仍无法复现 ISK（CPace 需对方 scalar）',
-		`${Date.now() - t0}ms/${dict.length} 词，实际比较 ${attempts} 次`);
+	ok(leaked === 0, '密码绑定性：固定临时值时，换密码必然换 ISK（若 G 忽略 prs 则此处变红）',
+		`${dict.length} 个错误密码全部未复现`);
+
+	// 可证伪：ISK 必须依赖对端 ya
+	const yaB2 = GTrue.multiply(scalarOf(9)).toBytes();
+	ok(b64(cpaceFinish(aA, yaB2, yaA, sid, CI)) !== b64(iskTrue),
+		'ISK 依赖对端 ya（对端未参与即无法确定共享密钥）');
+
+	// 可证伪：角色互换不影响结果（ya/yb 按字节排序而非角色序）
+	ok(b64(cpaceFinish(aB, yaA, yaB, sid, CI)) === b64(iskTrue),
+		'角色互换得到同一 ISK（ISK 内 ya/yb 按字节序排列，双方对称）');
+
+	// 离线攻击的真实论点：攻击者猜对密码也不能复现——因为缺对方的 ya 与标量
+	const aAtk = scalarOf(7);
+	const yaAtk = GTrue.multiply(aAtk).toBytes();
+	ok(b64(cpaceFinish(aAtk, yaB, yaAtk, sid, CI)) !== b64(iskTrue),
+		'离线字典攻击不可行：猜对密码也需对方 ya，攻击者用自己的临时标量无法复现 ISK');
 
 	const dt0 = Date.now(); stretchArgon2id('x', ROOM); const dt = Date.now() - dt0;
 	ok(dt > 100, `Argon2id 单次拉伸 ${dt}ms（t=2,m=19456,p=1）抬高在线猜测成本`);
@@ -138,13 +155,13 @@ console.log('\n②\' epoch 跳变上限（hs.e 由对端可控）');
 	// 跳 EPOCH_MAX_STEPS 以内也应放行
 	const sMax = Session.pair(lo.bundle, hi.bundle, pLo, pHi.yaBytes, null, prs2, ROOM, rn, EPOCH_MAX_STEPS);
 	ok(sMax.epoch === EPOCH_MAX_STEPS, `epoch=${EPOCH_MAX_STEPS}（上限内）放行`);
-	// 越界必须被拒：曾经 rotateTo(epoch, epoch+1) 等于取消上限，单帧即可冻结标签页
+	// 越界必须被拒：否则单条 hs 帧即可让本端做任意轮 HKDF 推进
 	const tDoS = Date.now();
 	throws(() => Session.pair(lo.bundle, hi.bundle, pLo, pHi.yaBytes, null, prs2, ROOM, rn, 100000),
 		Err.STATE_DESYNC, 'pair(epoch=100000) 被步数闸门拒绝（H1 修复）');
 	throws(() => Session.pair(lo.bundle, hi.bundle, pLo, pHi.yaBytes, null, prs2, ROOM, rn, 1e9),
 		Err.STATE_DESYNC, 'pair(epoch=1e9) 被拒绝，不再挂起 UI');
-	ok(Date.now() - tDoS < 1000, `恶意 epoch 的配对耗时被限制在 ${Date.now() - tDoS}ms（修复前 1e5 需 ~8s，1e9 永久挂起）`);
+	ok(Date.now() - tDoS < 1000, `恶意 epoch 的配对耗时被限制在 ${Date.now() - tDoS}ms`);
 	// 直接调 rotateTo 的跳变闸门同样生效
 	const sGate = Session.pair(lo.bundle, hi.bundle, pLo, pHi.yaBytes, null, prs2, ROOM, rn, 0);
 	throws(() => sGate.rotateTo(EPOCH_MAX_STEPS + 1), Err.STATE_DESYNC, `rotateTo 超过 ${EPOCH_MAX_STEPS} 步被拒`);
@@ -161,7 +178,7 @@ console.log('\n③ AEAD 与填充');
 	const wire = sA.encrypt({ a: 'm', t: 'text', d: '转账100元' });
 	const obj = JSON.parse(wire);
 	const flip = (w, byteIdx) => { const o = JSON.parse(w); const b = unb64(o.ct); b[byteIdx] ^= 1; o.ct = b64(b); return JSON.stringify(o); };
-	throws(() => sB.decrypt(flip(wire, 8)), Err.AUTH_FAILED, '比特翻转被 Poly1305 拒绝（v1 缺陷 #2 修复）');
+	throws(() => sB.decrypt(flip(wire, 8)), Err.AUTH_FAILED, '比特翻转被 Poly1305 拒绝');
 	ok(sB.decrypt(wire).d === '转账100元', '未篡改正常解出');
 	throws(() => sB.decrypt(wire), Err.REPLAY, '重放被拒');
 	throws(() => { const o = JSON.parse(wire); o.to = 'ffffffffffff'; sB.decrypt(JSON.stringify(o)); }, Err.REPLAY, '改 to 转发被拒');
@@ -268,7 +285,7 @@ console.log('\n⑥ 身份与其他');
 {
 	const seed = new Uint8Array(32); seed[0] = 9;
 	const a1 = new Identity(seed), a2 = new Identity(seed);
-	ok(a1.id === a2.id, 'clientId 由身份决定，重连恒定（v1 缺陷 #10 修复）');
+	ok(a1.id === a2.id, 'clientId 由身份决定，重连恒定');
 	ok(/^[0-9a-f]{12}$/.test(a1.id), 'id 为 12 hex (48bit)');
 	const rn = nonceOf(51);
 	const a1bundle = a1.makeBundle(rn);

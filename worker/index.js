@@ -1,16 +1,13 @@
 // ═══════════════════════════════════════════════════════════════════════
 //  ZQ-Chat v2 Worker —— 盲中继
 //
-//  服务器不持有任何可用于解密的密钥（规格 §7.1）。v1 的 RSA / P-384 ECDH /
-//  AES-CBC / 私钥落盘 / 解密打印日志全部删除。只按明文信封路由。
-//
-//  修复 v1 缺陷：
-//   #7  按房间分片 Durable Object（idFromName(roomHash)），不再是全局单例
-//   #10 clientId 由客户端身份密钥决定，服务器只绑定不生成
-//   #8  日志仅元数据，绝不记录载荷
-//   #5  过期连接由独立定时器清理，不再依赖新连接触发
-//   #11 握手类消息上限 8192B；业务消息上限 8MB
-//   §7.5 令牌桶 / 握手限流 / 连接数上限 / bundle 验签失败拒绝
+//  服务器不持有任何可用于解密的密钥（规格 §7.1）。只按明文信封路由：
+//   · Durable Object 按房间分片（idFromName(roomHash)）
+//   · clientId 由客户端身份密钥决定，服务器只绑定不生成
+//   · 日志仅元数据，绝不记录载荷
+//   · 过期连接由独立定时器清理
+//   · 握手类消息上限 8192B；业务消息上限 8MB
+//   · 令牌桶 / 握手限流 / 连接数上限 / bundle 验签失败拒绝
 // ═══════════════════════════════════════════════════════════════════════
 import { isString, isObject, b64dec, b64enc, getTime, logEvent } from './utils.js';
 
@@ -31,7 +28,7 @@ export default {
       if (!/^[0-9a-f]{64}$/.test(room)) {
         return new Response('bad room id', { status: 400 });
       }
-      // ★ 按房间分片，不再是 idFromName('chat-room') 全局单例
+      // ★ 按房间分片
       const stub = env.CHAT_ROOM.get(env.CHAT_ROOM.idFromName(room));
       return stub.fetch(request);
     }
@@ -55,7 +52,7 @@ export class ChatRoom {
     this.roomBucket = { tokens: 1000, last: getTime() };
     this.cleanupTimer = null;
     this.readyEd25519 = null;   // 能力探测缓存
-    this.ensureCleanup();       // 独立周期清理（v1 缺陷 #5：过去只在新连接时触发）
+    this.ensureCleanup();       // 独立周期清理，不依赖新连接触发
   }
 
   // ── 每连接状态（不持久化：DO 重启即房间清空，与"无历史"设计一致）──
@@ -130,7 +127,7 @@ export class ChatRoom {
         if (!this.take(this.roomBucket, 1, 200 / 1, 1000)) { this.send(connection, JSON.stringify({ t: 'error', code: 'ROOM_RATE_LIMIT' })); return; }
         // 说明：限流只针对完整握手（join，见 handleJoin）；hs/ctag 是每 peer 的
         // 正常握手碎片，N 人房间合法流量即 >3/10s，中继对这些消息不做密码学运算，
-        // 由令牌桶与尺寸上限兜底即可（早期版本在这里误限流导致握手中断，已修复）
+        // 由令牌桶与尺寸上限兜底即可
 
         switch (msg.t) {
           case 'hs':
@@ -315,6 +312,11 @@ export class ChatRoom {
       const idB = new TextEncoder().encode(b.id);
       const ipk = b64dec(b.ipk); const xpk = b64dec(b.xpk); const kpk = b64dec(b.kpk); const nonce = b64dec(nonceB64);
       if (ipk.length !== 32 || xpk.length !== 32 || kpk.length !== 1184 || nonce.length !== 16) return false;
+      // id 必须由身份公钥导出。签名只证明"持有 ipk 私钥"，不证明"该 id 属于 ipk"；
+      // 缺此绑定，任意私钥持有者都能冒用他人 id（撞 id 即触发 DUPLICATE_ID 踢人）。
+      const idHash = new Uint8Array(await crypto.subtle.digest('SHA-256', ipk));
+      const derivedId = Array.from(idHash, (x) => x.toString(16).padStart(2, '0')).join('').slice(0, 12);
+      if (derivedId !== b.id) return false;
       const msg = new Uint8Array(idB.length + 32 + 32 + 1184 + 16);
       let o = 0;
       for (const part of [idB, ipk, xpk, kpk, nonce]) { msg.set(part, o); o += part.length; }

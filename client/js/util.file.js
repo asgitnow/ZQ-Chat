@@ -10,7 +10,7 @@ const DEFAULT_VOLUME_SIZE = 256 * 1024; // 512KB
 // 文件传输状态管理
 window.fileTransfers = new Map();
 
-// v2: 断线时标记进行中的传输为失败；60 秒无新分片自动清理（规格 §8.3-3）
+// 断线时标记进行中的传输为失败；60 秒无新分片自动清理（规格 §8.3-3）
 window.addEventListener('zqDisconnected', () => {
 	for (const [fileId, t] of window.fileTransfers.entries()) {
 		if (t.status !== 'completed') { t.status = 'failed'; }

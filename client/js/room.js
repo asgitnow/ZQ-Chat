@@ -115,7 +115,7 @@ export function joinRoom(userName, roomName, password, modal = null, onResult) {
 			if (!disconnectHinted) {
 				disconnectHinted = true;
 				addSystemMsg(t('system.disconnected', 'Connection interrupted. Messages during the outage were not received.'));
-				// 断线时清理进行中的文件传输（修复 v1 fileTransfers 无超时清理）
+				// 断线时清理进行中的文件传输
 				window.dispatchEvent(new CustomEvent('zqDisconnected'));
 				setTimeout(() => { disconnectHinted = false }, 8000);
 			}
