@@ -155,7 +155,7 @@ export class Identity {
 export class Session {
   /** 为某个 peer 准备 CPace（ya 随 hs 消息发出） */
   static prepare(mb, pb, prs, roomId, roomNonceBytes) {
-    const { sid, CI } = cpaceContext(roomId, mb.id, pb.id, roomNonceBytes, mb.ipk, pb.ipk);
+    const { sid, CI } = cpaceContext(roomId, mb.id, pb.id, roomNonceBytes, mb.ipk, pb.ipk, mb.xpk, pb.xpk);
     return { ...cpaceInit(prs, sid, CI), sid, CI };
   }
 

@@ -4,7 +4,8 @@ import {
 	Identity, Session, Err, padPayload, unpadPayload, b64, unb64,
 	TokenBucket, stretchArgon2id, ROOM_NONCE_LEN, EPOCH_MAX_STEPS,
 } from '../client/js/zqcrypto.mjs';
-import { cpaceFinish, cpaceContext, cpaceGenerator } from '../client/js/zqcpace.mjs';
+import { cpaceFinish, cpaceContext, calculateGenerator } from '../client/js/zqcpace.mjs';
+import { checkVectors } from './cpace-vectors.mjs';
 import { ristretto255_hasher } from '@noble/curves/ed25519.js';
 
 let pass = 0, fail = 0;
@@ -90,10 +91,11 @@ console.log('\n② 密码安全');
 	// 固定临时值（同一对标量与 ya），只变 prs。
 	// 若 prs 不参与生成元 G，错误密码会算出同一个 G、同一个 ya、同一个 ISK，断言即变红。
 	// 反之，若每次猜测都重新 prepare()，随机 ya 必然不同，断言会无条件通过。
-	const { sid, CI } = cpaceContext(ROOM, A.bundle.id, B.bundle.id, rn, A.bundle.ipk, B.bundle.ipk);
+	const { sid, CI } = cpaceContext(ROOM, A.bundle.id, B.bundle.id, rn,
+		A.bundle.ipk, B.bundle.ipk, A.bundle.xpk, B.bundle.xpk);
 	const scalarOf = (byte) => ristretto255_hasher.hashToScalar(new Uint8Array(32).fill(byte));
 	const aA = scalarOf(1), aB = scalarOf(2);
-	const GTrue = cpaceGenerator(prs, sid, CI);
+	const GTrue = calculateGenerator(prs, sid, CI);
 	const yaA = GTrue.multiply(aA).toBytes();
 	const yaB = GTrue.multiply(aB).toBytes();
 	const iskTrue = cpaceFinish(aA, yaB, yaA, sid, CI);
@@ -106,7 +108,7 @@ console.log('\n② 密码安全');
 	const dict = ['company', 'secrets', 'hunter2', 'password', '123456', 'PW-别的', ''];
 	let leaked = 0;
 	for (const guess of dict) {
-		const Gw = cpaceGenerator(stretchArgon2id(guess, ROOM), sid, CI);
+		const Gw = calculateGenerator(stretchArgon2id(guess, ROOM), sid, CI);
 		const yaAw = Gw.multiply(aA).toBytes();
 		const yaBw = Gw.multiply(aB).toBytes();
 		if (b64(cpaceFinish(aA, yaBw, yaAw, sid, CI)) === b64(iskTrue)) leaked++;
@@ -333,6 +335,10 @@ console.log('\n⑥ 身份与其他');
 	throws(() => ys2.decrypt(wireOld), Err.AUTH_FAILED, '重连后旧密文在新会话不可解（无需持久化序号）');
 	ok(roundtrip(xs2, ys2, 'new'), '新会话互通');
 }
+
+// ═════ ⑦ CPace 与草案官方测试向量对齐 ═════
+console.log('\n⑦ CPace 草案官方测试向量（draft-irtf-cfrg-cpace-21 附录 B.3）');
+checkVectors((c, n, x = '') => ok(c, n, x));
 
 console.log(`\n${'═'.repeat(60)}\n结果: ${pass} 项通过, ${fail} 项失败\n${'═'.repeat(60)}`);
 process.exit(fail ? 1 : 0);

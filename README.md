@@ -171,14 +171,15 @@ sequenceDiagram
 | `worker/` | Worker 盲中继，Durable Object 按房间分片 |
 | `headless/zqchat.mjs` | CLI 通道 |
 | `echbridge/` | Go TLS ECH 桥（本地直接接入的有效通道，部署无关） |
-| `tests/` | 密码学单元 69 项 + 中继 E2E 31 项 |
+| `tests/` | 密码学单元 87 项（含 CPace 官方向量 15 项）+ 中继 E2E 34 项 |
 
 ## 测试
 
 ```bash
 npm install
-node tests/crypto.test.mjs      # 密码学单元测试
+node tests/crypto.test.mjs      # 密码学单元测试（含 CPace 草案官方测试向量）
 node tests/e2e-relay.test.mjs   # 真实 worker 源码 + 真实客户端的端到端测试
+node tests/cpace-vectors.mjs    # 单独跑 CPace 向量对齐校验
 ```
 
 抓包可见 WebSocket 上只有 bundle 与密文；E2E 测试对服务器经手的每一帧断言不含明文。

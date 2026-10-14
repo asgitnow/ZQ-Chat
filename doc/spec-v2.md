@@ -63,32 +63,47 @@ prs = Argon2id( password, salt = roomId, { t:2, m:19456 KiB, p:1, dkLen:32 } )
 
 ## 6. CPace PAKE（Ristretto255）
 
+实现对齐 **draft-irtf-cfrg-cpace-21**，密码套件 **CPACE-RISTR255-SHA512**
+（`G = G_Ristretto255`，`H = SHA-512`，草案 §8.3）。规范的字符串运算与群运算函数
+（`prepend_len` / `lv_cat` / `o_cat` / `generator_string` / `calculate_generator` /
+`sample_scalar` / `scalar_mult_vfy` / `transcript_ir` / `transcript_oc`）均按原文实现，
+未作简化。对齐情况由 `tests/cpace-vectors.mjs` 用草案附录 B.3 的官方测试向量逐字节验证。
+
 `sid` 与 `CI` 双方可独立确定，零额外往返。`lo`/`hi` 为按 id 字符串字典序排列的两方，
 对应的身份公钥同序排列：
 
 ```
-sid = SHA512( "zqchat/v2/sid" ‖ lp(roomId) ‖ lp(lo) ‖ lp(hi) ‖ lp(roomNonce) )
-CI  =       "zqchat/v2/CI"  ‖ lp(roomId) ‖ lp(lo) ‖ lp(hi) ‖ lp(ipkLo) ‖ lp(ipkHi)
+DSI = "CPaceRistretto255"
+DSI_ISK = "CPaceRistretto255_ISK"
+H.s_in_bytes = 128,  H 输出 64 字节,  field_size = 32,  group_size_bits = 252
 
-DSI = "CPaceRistretto255-1"
-G   = hashToCurve( DSI ‖ lp(prs) ‖ lp(sid) ‖ lp(CI) )
+sid = SHA512( lv_cat("zqchat/v2/sid", roomId, lo, hi, roomNonce, xpkLo, xpkHi) )
+CI  =       lv_cat("zqchat/v2/CI",  roomId, lo, hi, ipkLo, ipkHi)
+
+生成元（草案 §8.1/§8.3）：
+  len_zpad = MAX(0, 128 − len(prepend_len(PRS)) − len(prepend_len(DSI)) − 1)
+  gen_str  = lv_cat(DSI, PRS, zero_bytes(len_zpad), CI, sid)
+  G        = element_derivation( SHA512(gen_str)[0:64] )
+             （element_derivation = RFC 9496 §4.3.4 from_uniform_bytes）
 ```
 
 发起方（`cpaceInit`）：
 
 ```
-a   = hashToScalar(randomBytes(64))
+a   = sample_scalar()          取 32 字节随机，清除高于 252 位的高位，小端解释为整数
 ya  = G · a                    公开；scalar 私留
 ```
 
 接收方（`cpaceFinish`）：
 
 ```
-Y  = decode(peerYa)            非规范点（含全零）→ 抛错
-K  = Y · a                     is0 → 抛错
-[y1, y2] = 按 cmpBytes 字节序排序的 (myYa, peerYa)     ← 字节序，非角色序
-ISK = SHA512( DSI ‖ "ISK" ‖ lp(sid) ‖ lp(y1) ‖ lp(y2) ‖ lp(K) ‖ lp(CI) )
+K   = scalar_mult_vfy(a, peerYa)     解码失败或为单位元 → 中止
+T   = transcript_oc(ya, ADa, peerYa, ADb)
+    = o_cat( lv_cat(ya, ADa), lv_cat(peerYa, ADb) )      b"oc" 前缀 + 字典序较大者在前
+ISK = SHA512( lv_cat(DSI_ISK, sid, K) ‖ T )
 ```
+
+本项目 `ADa`/`ADb` 传空字节串，采用**对称设置**（`transcript_oc`），因握手无强制发起方/响应方顺序。
 
 **安全属性**：密码只影响生成元 `G`。攻击者即使猜对密码并掌握全部公开材料（`ya`、`sid`、`CI`），
 也无法离线复现 `ISK`——他缺少对端的临时标量 `a`，因此必须完成一次交互握手才能验证一个猜测。
