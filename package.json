@@ -1,0 +1,43 @@
+{
+  "name": "zqchat-v2",
+  "version": "1.0.0",
+  "description": "端到端加密节点",
+  "main": "worker/index.js",
+  "scripts": {
+    "build": "vite build",
+    "dev": "wrangler dev",
+    "dev:local": "wrangler dev --port 8799",
+    "deploy:temp": "wrangler deploy --temporary"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/asgitnow/zq-chat.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/asgitnow/zq-chat/issues"
+  },
+  "homepage": "https://github.com/asgitnow/zq-chat#readme",
+  "devDependencies": {
+    "autoprefixer": "^10.6.1",
+    "cssnano": "^7.1.9",
+    "terser": "^5.43.1",
+    "vite": "^6.4.4",
+    "wrangler": "^4.151.0"
+  },
+  "dependencies": {
+    "@dicebear/core": "^9.4.3",
+    "@dicebear/micah": "^9.4.2",
+    "@noble/ciphers": "^2.4.0",
+    "@noble/curves": "^2.4.0",
+    "@noble/hashes": "^2.4.0",
+    "@noble/post-quantum": "^0.7.1",
+    "dompurify": "^3.4.17",
+    "emoji-picker-element": "^1.29.1",
+    "fflate": "^0.8.3",
+    "geektls": "^0.2.1"
+  },
+  "type": "module"
+}
