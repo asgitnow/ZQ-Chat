@@ -183,6 +183,14 @@ node tests/e2e-relay.test.mjs   # 真实 worker 源码 + 真实客户端的端�
 
 抓包可见 WebSocket 上只有 bundle 与密文；E2E 测试对服务器经手的每一帧断言不含明文。
 
+## 文档
+
+| 文档 | 内容 |
+|---|---|
+| [doc/spec-v2.md](doc/spec-v2.md) | 实现规格：身份层、CPace、密钥派生、握手状态机、epoch 轮换、错误码 |
+| [doc/api.md](doc/api.md) | 程序调用：`NodeCrypt` / `Identity` / `Session` 接口、消息类型、headless CLI |
+| [doc/wire-v2.md](doc/wire-v2.md) | 线上帧协议与中继侧约束 |
+
 ## 使用注意
 
 - 房间密码建议用 4 个以上随机词组成的口令，允许空格与符号，长度上限 128
